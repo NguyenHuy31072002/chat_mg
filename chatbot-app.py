@@ -92,6 +92,7 @@ ATLAS_URI = getenv("ATLAS_URI")
 MONGODB_DB = getenv("MONGODB_DB")
 MONGODB_COLLECTION = getenv("MONGODB_COLLECTION")
 
+
 client = MongoClient(ATLAS_URI, server_api=ServerApi('1'))
 
 def test_mongodb_connection():
@@ -176,6 +177,8 @@ def get_pdf_text(pdf_docs):
     return "".join(process_pdf(pdf) for pdf in pdf_docs)
 
 
+
+
 def get_text_chunks(text):
     text_splitter = CharacterTextSplitter(
         separator="\n", 
@@ -187,8 +190,12 @@ def get_text_chunks(text):
     logging.info(f"Amount of chunks created: {len(chunks)}")
     return chunks
 
+
+from langchain_community.embeddings import SentenceTransformerEmbeddings
+
+
 def get_vectorstore(text_chunks: List[str], metadatas: List[Dict[str, Any]] = None) -> MongoDBAtlasVectorSearch:
-    embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
+    embeddings = SentenceTransformerEmbeddings(model_name='keepitreal/vietnamese-sbert')
 
     mongo_client = MongoClient(ATLAS_URI)
     db = mongo_client[MONGODB_DB]
@@ -203,20 +210,74 @@ def get_vectorstore(text_chunks: List[str], metadatas: List[Dict[str, Any]] = No
         relevance_score_fn="cosine"
     )
 
-    ids = [vector_search.add_texts([chunk], [metadata] if metadatas else None)[0] 
-           for chunk, metadata in zip(text_chunks, metadatas or [None] * len(text_chunks))]
-    logging.info(f"Added {len(ids)} embeddings to the vector store")
+    try:
+        ids = [vector_search.add_texts([chunk], [metadata] if metadatas else None)[0] 
+               for chunk, metadata in zip(text_chunks, metadatas or [None] * len(text_chunks))]
+        logging.info(f"Added {len(ids)} embeddings to the vector store: {ids}")
+    except Exception as e:
+        logging.error(f"Error adding embeddings: {str(e)}")
+
     return vector_search
 
+
+
+
+
+# Tạo chuỗi hỏi đáp
+def create_qa_chain(db):
+    def custom_llm(query, context):
+        api_key = getenv("GOOGLE_API_KEY")
+        # Load API key từ .env
+        genai.configure(api_key=api_key)
+        llm = genai.GenerativeModel('gemini-1.5-flash')
+        # Tạo câu hỏi từ ngữ cảnh và câu hỏi
+        full_prompt = f"Câu hỏi: {query}\nNgữ cảnh: {context}\nTrả lời:"
+        response = llm.generate_content(full_prompt)
+        if "Câu trả lời không có trong ngữ cảnh" in response.text:
+            response = llm.generate_content(query)
+        return response.text
+
+    class CustomRetrievalQA:
+        def __init__(self, retriever):
+            self.retriever = retriever
+
+        def invoke(self, inputs):
+            query = inputs["question"]
+            docs = self.retriever.get_relevant_documents(query)
+            context = " ".join([doc.page_content for doc in docs])
+            return {"answer": custom_llm(query, context)}
+
+    retriever = db.as_retriever(search_kwargs={"k": 3}, max_tokens_limit=6000)
+    return CustomRetrievalQA(retriever)
+
+import google.generativeai as genai
+
 def get_conversation_chain(vectorstore):
-    llm = ChatOpenAI(model_name="gpt-4")
-    memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-    conversation_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vectorstore.as_retriever(),
-        memory=memory
-    )
-    return conversation_chain
+    # Lấy API key từ biến môi trường và cấu hình Google Gemini API
+    api_key = getenv("GOOGLE_API_KEY")
+    genai.configure(api_key=api_key)
+    llm = genai.GenerativeModel('gemini-1.5-flash')
+    
+    # Tạo đối tượng CustomRetrievalQA
+    custom_qa_chain = create_qa_chain(vectorstore)
+    
+    return custom_qa_chain
+
+
+# def get_conversation_chain(vectorstore):
+#     # llm = ChatOpenAI(model_name="gpt-4")
+#     # Lấy API key từ biến môi trường và cấu hình Google Gemini API
+#     api_key = getenv("GOOGLE_API_KEY")
+#     # Load API key từ .env
+#     genai.configure(api_key=api_key)
+#     llm = genai.GenerativeModel('gemini-1.5-flash')
+#     memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+#     conversation_chain = ConversationalRetrievalChain.from_llm(
+#         llm=llm,
+#         retriever=vectorstore.as_retriever(),
+#         memory=memory
+#     )
+#     return conversation_chain
 
 def handle_userinput(user_question):
     if st.session_state.vectorstore is None:
@@ -243,7 +304,8 @@ def main():
     if st.session_state.vectorstore is None:
         db = client[MONGODB_DB]  # Use the global client
         collection = db[MONGODB_COLLECTION]
-        embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
+        # embeddings = OpenAIEmbeddings(model="text-embedding-ada-002")
+        embeddings = SentenceTransformerEmbeddings(model_name='keepitreal/vietnamese-sbert')
         st.session_state.vectorstore = MongoDBAtlasVectorSearch(
             collection,
             embedding=embeddings,  

@@ -12,7 +12,6 @@ load_dotenv()
 atlas_uri = getenv("ATLAS_URI")
 mongodb_db = getenv("MONGODB_DB")
 mongodb_collection = getenv("MONGODB_COLLECTION")
-
 # Debug print statements
 print(f"ATLAS_URI: {atlas_uri}")
 print(f"MONGODB_DB: {mongodb_db}")
