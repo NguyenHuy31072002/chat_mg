@@ -73,7 +73,7 @@ Dưới đây là các bước hướng dẫn cách thiết lập ứng dụng n
 ![networking-screenshot](images/mdb-networking-screenshot.png)
 </br>
 
-* Go to Data Services > Database, click on the `connect` tab, and copy the database connection string into your `.env` file.
+* Vào Dịch vụ dữ liệu > Cơ sở dữ liệu, nhấp vào tab `connect` và sao chép chuỗi kết nối cơ sở dữ liệu vào tệp `.env` của bạn.
 
 </br>
 
